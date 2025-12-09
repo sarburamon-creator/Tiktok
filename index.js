@@ -226,26 +226,28 @@ async function getProfile(session_id, device_id, iid) {
         let param = `device_id=${device_id}&iid=${iid}&id=kaa&version_code=34.0.0&language=en&app_name=lite&app_version=34.0.0&carrier_region=SA&tz_offset=10800&locale=en&sys_region=SA&aid=473824`;
         let url = `https://api16.tiktokv.com/aweme/v1/user/profile/self/?${param}`;
 
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 10000);
-
         let res = await fetch(url, {
             headers: {
                 "Cookie": `sessionid=${session_id}`,
                 "User-Agent": "com.zhiliaoapp.musically/2022701030 (Linux; U; Android 9; en_US; RMX3551; Build/PQ3A.190705.003; Cronet/TTNetVersion:5c5a6994 2022-07-13)",
                 "Accept-Encoding": "gzip, deflate"
-            },
-            signal: controller.signal
+            }
         });
-
-        clearTimeout(timeout);
 
         if (!res.ok) {
             console.error(`API Error: ${res.status} ${res.statusText}`);
             return "None";
         }
 
-        let data = await res.json();
+        let text = await res.text();
+        let data;
+        try {
+            data = JSON.parse(text);
+        } catch (e) {
+            console.error("Invalid JSON response:", text.substring(0, 200));
+            return "None";
+        }
+        
         return data.user?.unique_id || "None";
 
     } catch (e) {
@@ -280,9 +282,6 @@ async function changeUsername(session_id, new_username) {
         console.log(`X-Gorgon: ${sig["X-Gorgon"]}`);
         console.log(`X-Khronos: ${sig["X-Khronos"]}`);
 
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 30000);
-
         console.log("⏳ Trimit cererea la TikTok...");
         let res = await fetch(
             `https://api16.tiktokv.com/aweme/v1/commit/user/?${param}`,
@@ -295,31 +294,24 @@ async function changeUsername(session_id, new_username) {
                     "Accept-Encoding": "gzip, deflate",
                     ...sig
                 },
-                body: data,
-                signal: controller.signal
+                body: data
             }
         );
-
-        clearTimeout(timeout);
 
         let responseText = await res.text();
         console.log(`Răspuns TikTok: ${responseText.substring(0, 200)}...`);
 
-        if (!res.ok) {
-            return `❌ Eroare HTTP ${res.status}: ${responseText.substring(0, 500)}`;
-        }
-
         // Așteptăm puțin pentru ca schimbarea să fie procesată
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        await new Promise(resolve => setTimeout(resolve, 3000));
 
         console.log("⏳ Verific noul username...");
         let changed = await getProfile(session_id, device_id, iid);
         console.log(`Noul username: ${changed}`);
 
         if (changed === new_username) {
-            return `✔ Username schimbat cu succes!\nDe la: ${lastUsername}\nLa: ${changed}`;
+            return `✅ Username schimbat cu succes!\nDe la: ${lastUsername}\nLa: ${changed}`;
         } else if (changed !== lastUsername) {
-            return `⚠ Username schimbat, dar diferit de cel cerut.\nVeche: ${lastUsername}\nNou: ${changed}`;
+            return `⚠️ Username schimbat, dar diferit de cel cerut.\nVeche: ${lastUsername}\nNou: ${changed}`;
         } else {
             return `❌ Username nu s-a schimbat. Răspuns TikTok:\n${responseText.substring(0, 1000)}`;
         }
@@ -347,22 +339,34 @@ client.on("interactionCreate", async (interaction) => {
         const session = interaction.options.getString("session");
         
         if (!session || session.length < 10) {
-            return interaction.reply({ content: "❌ Session ID invalid!", ephemeral: true });
+            await interaction.reply({ 
+                content: "❌ Session ID invalid!", 
+                flags: 64 // EPHEMERAL
+            });
+            return;
         }
         
         data.session_id = session;
         saveData(data);
         
         console.log(`Session ID salvat: ${session.substring(0, 10)}...`);
-        return interaction.reply({ content: "✔ Session ID salvat!", ephemeral: true });
+        await interaction.reply({ 
+            content: "✅ Session ID salvat!", 
+            flags: 64 // EPHEMERAL
+        });
+        return;
     }
 
     if (interaction.commandName === "check_session") {
         if (!data.session_id || data.session_id.trim() === "") {
-            return interaction.reply({ content: "❌ Niciun session ID salvat.", ephemeral: true });
+            await interaction.reply({ 
+                content: "❌ Niciun session ID salvat.", 
+                flags: 64 
+            });
+            return;
         }
         
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: 64 });
         
         let device_id = Math.floor(Math.random() * 9999999999).toString();
         let iid = Math.floor(Math.random() * 9999999999).toString();
@@ -371,31 +375,35 @@ client.on("interactionCreate", async (interaction) => {
             let username = await getProfile(data.session_id, device_id, iid);
             
             if (username === "None") {
-                return interaction.editReply("❌ Session ID invalid sau expirat!");
+                await interaction.editReply("❌ Session ID invalid sau expirat!");
+                return;
             }
             
-            return interaction.editReply(`✔ Session ID valid!\nUsername curent: **${username}**`);
+            await interaction.editReply(`✅ Session ID valid!\nUsername curent: **${username}**`);
         } catch (error) {
-            return interaction.editReply(`❌ Eroare la verificare: ${error.message}`);
+            await interaction.editReply(`❌ Eroare la verificare: ${error.message}`);
         }
+        return;
     }
 
     if (interaction.commandName === "new_username") {
         if (!data.session_id || data.session_id.trim() === "") {
-            return interaction.reply({ 
+            await interaction.reply({ 
                 content: "❌ Folosește întâi `/set_session_id` pentru a salva session ID-ul!", 
-                ephemeral: true 
+                flags: 64
             });
+            return;
         }
 
         const username = interaction.options.getString("username");
         
         // Validare username
         if (!username || username.length < 2 || username.length > 24) {
-            return interaction.reply({ 
+            await interaction.reply({ 
                 content: "❌ Username-ul trebuie să aibă între 2 și 24 de caractere!", 
-                ephemeral: true 
+                flags: 64
             });
+            return;
         }
         
         // Trimitem mesajul de "În curs..."
@@ -407,7 +415,8 @@ client.on("interactionCreate", async (interaction) => {
         
         console.log(`Rezultat: ${result.substring(0, 100)}...`);
         
-        return interaction.editReply(result);
+        await interaction.editReply(result);
+        return;
     }
 });
 
@@ -426,4 +435,21 @@ process.on("uncaughtException", (error) => {
 client.login(TOKEN).catch(error => {
     console.error("❌ Eroare la login:", error);
     process.exit(1);
+});
+
+// ======================================================
+// ========== FIX PORT FOR RENDER =======================
+// ======================================================
+
+// Render.com necesită ca aplicația să asculte pe un port
+const express = require('express');
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+    res.send('🤖 TikTok Username Bot is running!');
+});
+
+app.listen(PORT, () => {
+    console.log(`🌐 Server web rulează pe portul ${PORT}`);
 });
